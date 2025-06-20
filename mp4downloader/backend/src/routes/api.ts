@@ -23,3 +23,15 @@ apiRouter.get('/downloads/status', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Download a file
+apiRouter.get('/downloads/file/:id', async (req: Request, res: Response) => {
+  try {
+    await downloadController.downloadFile(req, res);
+  } catch (error) {
+    console.error('Error in downloadFile:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});

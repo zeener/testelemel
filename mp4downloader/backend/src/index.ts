@@ -63,62 +63,9 @@ process.on('uncaughtException', (error) => {
   // process.exit(1);
 });
 
-// Start server
-console.log('Starting server...');
-const server = app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log('Server started successfully');
-  
-  // Keep the process alive
-  const keepAlive = setInterval(() => {
-    console.log('Server keep-alive ping');
-  }, 30000);
-  
-  // Clean up on server close
-  server.on('close', () => {
-    console.log('Server is closing...');
-    clearInterval(keepAlive);
-  });
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  // Don't exit immediately, allow the server to handle existing connections
-  // process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit immediately, allow the server to handle existing connections
-  // process.exit(1);
-});
-
-// Handle server errors
-server.on('error', (error) => {
-  console.error('Server error event:', error);
-});
-
-// Handle process exit
-process.on('exit', (code) => {
-  console.log(`Process is exiting with code: ${code}`);
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled rejection at:', promise, 'reason:', reason);
-});
-
 // Handle process termination
 const gracefulShutdown = (signal: string) => {
-  console.log(`${signal} received. Shutting down gracefully...`);
+  console.log(`\n${signal} received. Shutting down gracefully...`);
   
   // Stop accepting new connections
   server.close((err) => {
@@ -137,16 +84,70 @@ const gracefulShutdown = (signal: string) => {
   }, 10000);
 };
 
+// Start server
+console.log('Starting server...');
+console.log('Process ID:', process.pid);
+
+// Create a simple HTTP server
+const server = app.listen(Number(PORT), '0.0.0.0', () => {
+  const address = server.address();
+  const actualPort = typeof address === 'string' ? PORT : address?.port;
+  console.log(`Server is running on http://localhost:${actualPort}`);
+  console.log('Server started successfully at', new Date().toISOString());
+  
+  // Log all active handles to debug
+  console.log('Server started at', new Date().toISOString());
+});
+
+// Keep the process alive
+const keepAlive = setInterval(() => {
+  console.log('Keep-alive ping at', new Date().toISOString());
+}, 1000 * 30); // Log every 30 seconds to keep the process alive
+
+// Clean up on server close
+server.on('close', () => {
+  console.log('Server is closing at', new Date().toISOString());
+  clearInterval(keepAlive);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error event at', new Date().toISOString(), ':', error);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error event:', error);
+});
+
+// Handle uncaught exceptions (only one handler)
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit immediately, allow the server to handle existing connections
+  // process.exit(1);
+});
+
+// Handle unhandled promise rejections (only one handler)
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit immediately, allow the server to handle existing connections
+  // process.exit(1);
+});
+
 // Handle termination signals
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Keep the process alive
-process.stdin.resume();
-
-// Prevent the process from closing immediately
-process.on('exit', (code) => {
-  console.log(`Process exiting with code ${code}`);
-});
+// Keep the process alive by keeping stdin open
+if (process.platform === 'win32') {
+  const rl = require('readline').createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  rl.on('SIGINT', function() {
+    process.emit('SIGINT');
+  });
+}
 
 export default app;

@@ -135,29 +135,47 @@ export const downloadService = {
     let link: HTMLAnchorElement | null = null;
     
     try {
-      // Fetch the file as a blob
-      const response = await api.get(`/downloads/${id}/file`, {
+      // Use the new file download endpoint with responseType 'blob' to handle binary data
+      const response = await axios({
+        method: 'GET',
+        url: `${API_BASE_URL}/downloads/file/${id}`,
         responseType: 'blob',
-        validateStatus: (status) => status < 500, // Don't throw for 4xx errors
         timeout: 30000, // 30 second timeout for downloads
       });
-      
+
       if (!response.data) {
         throw new Error('No data received from server');
       }
       
+      // Get the content disposition header to extract the filename if available
+      const contentDisposition = response.headers['content-disposition'];
+      let downloadFilename = filename;
+      
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (filenameMatch && filenameMatch[1]) {
+          downloadFilename = filenameMatch[1].replace(/['"]/g, '');
+        }
+      }
+      
+      // Ensure the filename has the .mp3 extension
+      if (!downloadFilename.toLowerCase().endsWith('.mp3')) {
+        downloadFilename = `${downloadFilename}.mp3`;
+      }
+      
       // Create a blob URL for the downloaded file
-      url = window.URL.createObjectURL(new Blob([response.data]));
+      const blob = new Blob([response.data], { type: response.headers['content-type'] || 'audio/mpeg' });
+      url = window.URL.createObjectURL(blob);
       
       // Create and trigger the download
       link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', filename.endsWith('.mp3') ? filename : `${filename}.mp3`);
+      link.download = downloadFilename;
       document.body.appendChild(link);
       link.click();
       
       // Log successful download
-      console.log(`Successfully downloaded file: ${filename}`);
+      console.log(`Successfully downloaded file: ${downloadFilename}`);
     } catch (error) {
       console.error('Error downloading file:', error);
       
@@ -171,18 +189,16 @@ export const downloadService = {
           errorMessage = 'File not found. It may have been deleted or expired.';
         } else if (error.response?.status === 403) {
           errorMessage = 'You do not have permission to download this file.';
-        } else if (error.response?.data?.message) {
-          errorMessage = error.response.data.message;
+        } else if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
         }
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
       }
       
       throw new Error(errorMessage);
     } finally {
-      // Clean up resources
-      if (link && link.parentNode) {
-        link.parentNode.removeChild(link);
+      // Clean up in case of success or error
+      if (link) {
+        link.remove();
       }
       if (url) {
         window.URL.revokeObjectURL(url);
