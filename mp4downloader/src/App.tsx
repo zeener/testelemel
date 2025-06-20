@@ -72,55 +72,51 @@ const App: FC = () => {
       
       setIsDownloading(true);
 
-      // Create a new download item
-      const newItem: DownloadItem = {
-        id: `temp-${Date.now()}`,
-        url,
-        title: url.split('/').pop() || 'download',
-        status: 'pending',
-        progress: 0,
-        quality,
-        timestamp: Date.now(),
-      };
-
-      setDownloadItems((prevItems) => [...prevItems, newItem]);
-
       try {
+        // First, start the download and get the actual download ID
         const response = await downloadService.startDownload([url], quality);
-
-        if (response.success && response.ids?.[0]) {
-          const itemId = response.ids[0];
-          setDownloadItems((prevItems) =>
-            prevItems.map((item) =>
-              item.id === newItem.id
-                ? {
-                    ...item,
-                    id: itemId,
-                    status: 'downloading',
-                    progress: 5, // Initial progress
-                  }
-                : item
-            )
-          );
-
-          toast({
-            title: 'Download started',
-            description: 'Your download has been queued.',
-            status: 'info',
-            duration: 3000,
-          });
-        } else {
+        
+        if (!response.success || !response.ids?.[0]) {
           throw new Error(response.message || 'Failed to start download');
         }
+        
+        const downloadId = response.ids[0];
+        
+        // Create a new download item with the actual download ID from the server
+        const newItem: DownloadItem = {
+          id: downloadId, // Use the actual download ID from the server
+          url,
+          title: url.split('/').pop() || 'download',
+          status: 'downloading',
+          progress: 5, // Initial progress
+          quality,
+          timestamp: Date.now(),
+        };
+        
+        setDownloadItems((prevItems) => [...prevItems, newItem]);
+
+        toast({
+          title: 'Download started',
+          description: 'Your download has been queued.',
+          status: 'info',
+          duration: 3000,
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to start download';
-        setDownloadItems((prevItems) =>
-          prevItems.map((item) =>
-            item.id === newItem.id
-              ? { ...item, status: 'error', error: errorMessage }
-              : item
-          )
-        );
+        
+        // Create an error item for the failed download
+        const errorItem: DownloadItem = {
+          id: `error-${Date.now()}`,
+          url,
+          title: url.split('/').pop() || 'download',
+          status: 'error',
+          progress: 0,
+          quality,
+          timestamp: Date.now(),
+          error: errorMessage,
+        };
+        
+        setDownloadItems((prevItems) => [...prevItems, errorItem]);
 
         toast({
           title: 'Error',
@@ -191,7 +187,7 @@ const App: FC = () => {
         <VStack spacing={8} align="stretch">
           <Box>
             <Text fontSize="3xl" fontWeight="bold" color="blue.600" mb={2}>
-              MP4 Downloader
+              MP3 Downloader
             </Text>
             <Text color="gray.600">Download and convert videos to MP3 with ease</Text>
           </Box>

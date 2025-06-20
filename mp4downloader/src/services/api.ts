@@ -67,10 +67,14 @@ export const downloadService = {
         quality: parseInt(quality, 10),
       });
       
+      if (!response.data || !response.data.downloadIds || !Array.isArray(response.data.downloadIds)) {
+        throw new Error('Invalid response format from server');
+      }
+      
       return {
         success: true,
         message: 'Download started successfully',
-        ids: response.data.ids,
+        ids: response.data.downloadIds, // Ensure we're using downloadIds from the response
       };
     } catch (error) {
       console.error('Error starting download:', error);
@@ -87,17 +91,33 @@ export const downloadService = {
     if (!ids.length) return [];
     
     try {
-      const response = await api.get<DownloadProgress[]>('/downloads/status', {
+      const response = await api.get<Array<DownloadProgress | { id: string; error: string }>>('/downloads/status', {
         params: { ids: ids.join(',') },
         validateStatus: (status) => status < 500 // Don't throw for 4xx errors
       });
       
-      return response.data || [];
+      if (!Array.isArray(response.data)) {
+        console.error('Invalid response format from /downloads/status:', response.data);
+        return [];
+      }
+      
+      // Map the response to ensure it matches the DownloadProgress type
+      return response.data.map((item) => {
+        if ('error' in item) {
+          // Handle error case
+          return {
+            id: item.id,
+            status: 'error' as const,
+            progress: 0,
+            error: item.error
+          };
+        }
+        return item;
+      });
     } catch (error) {
       console.error('Error getting download status:', error);
       // Return an empty array to prevent UI errors
       return [];
-      console.error('Error getting download status:', error);
       
       // Return the current status from local state if available
       return ids.map(id => ({

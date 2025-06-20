@@ -1,7 +1,7 @@
 {
   "name": "mp4downloader-backend",
   "version": "1.0.0",
-  "description": "Backend service for MP4 Downloader",
+  "description": "Backend service for MP3 Downloader",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

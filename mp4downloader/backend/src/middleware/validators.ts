@@ -14,8 +14,11 @@ export const validateStartDownload = [
   body('quality')
     .isNumeric()
     .withMessage('Quality must be a number')
-    .isInt({ min: 96, max: 320 })
-    .withMessage('Quality must be between 96 and 320 kbps'),
+    .custom((value) => {
+      const numericValue = Number(value);
+      return numericValue === 0 || (numericValue >= 96 && numericValue <= 320);
+    })
+    .withMessage('Quality must be 0 (best) or between 96 and 320 kbps'),
   (req: Request, res: Response, next: NextFunction) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

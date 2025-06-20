@@ -2,19 +2,19 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs-extra';
-import { exec } from 'youtube-dl-exec';
-import { logger } from '../utils/logger';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
-import { Readable } from 'stream';
+import { logger } from '../utils/logger';
 
 const execPromise = promisify(require('child_process').exec);
+
+type DownloadStatus = 'pending' | 'downloading' | 'converting' | 'completed' | 'error';
 
 interface DownloadInfo {
   id: string;
   url: string;
   quality: number;
-  status: 'pending' | 'downloading' | 'converting' | 'completed' | 'error';
+  status: DownloadStatus;
   progress: number;
   outputPath: string;
   startTime: Date;
@@ -25,165 +25,136 @@ interface DownloadInfo {
   title?: string;
 }
 
-// In-memory store for downloads (in a real app, use a database)
-const downloads = new Map<string, any>();
-const DOWNLOAD_DIR = path.join(process.cwd(), 'downloads');
+class DownloadController {
+  private downloads = new Map<string, DownloadInfo>();
+  private downloadDir: string;
+  
+  constructor() {
+    this.downloadDir = path.join(process.cwd(), 'downloads');
+    fs.ensureDirSync(this.downloadDir);
+    
+    // Bind methods
+    this.startDownload = this.startDownload.bind(this);
+    this.getDownloadStatus = this.getDownloadStatus.bind(this);
+    this.processDownload = this.processDownload.bind(this);
+  }
 
-// Ensure download directory exists
-fs.ensureDirSync(DOWNLOAD_DIR);
-
-export const downloadController = {
-  startDownload: async function(req: Request, res: Response) {
+  public async startDownload(req: Request, res: Response): Promise<Response> {
     try {
-      const { urls, quality } = req.body;
+      const { urls, quality = 0 } = req.body;
       logger.info('Starting download request', { urls, quality });
+      
+      if (!urls || !Array.isArray(urls) || urls.length === 0) {
+        return res.status(400).json({ error: 'At least one URL is required' });
+      }
+
       const downloadIds: string[] = [];
-      const controller = this; // Store reference to 'this'
 
       for (const url of urls) {
         const downloadId = uuidv4();
-        const outputPath = path.join(DOWNLOAD_DIR, `${downloadId}.mp3`);
+        const outputPath = path.join(this.downloadDir, `${downloadId}.mp3`);
         
-        // Store download info
-        const downloadInfo = {
+        const downloadInfo: DownloadInfo = {
           id: downloadId,
           url,
           quality,
-          status: 'downloading',
+          status: 'pending',
           progress: 0,
           outputPath,
           startTime: new Date(),
           lastUpdated: new Date(),
         };
 
-        downloads.set(downloadId, downloadInfo);
+        this.downloads.set(downloadId, downloadInfo);
         downloadIds.push(downloadId);
 
         // Start download in background
-        // Use the stored reference to 'this' to call processDownload
-        controller.processDownload(downloadId, url, quality, outputPath);
+        this.processDownload(downloadId, url, quality, outputPath).catch(error => {
+          logger.error(`Background download failed for ${url}:`, error);
+        });
       }
 
-      res.status(202).json({
-        success: true,
-        message: 'Download started',
-        ids: downloadIds,
+      return res.status(202).json({ 
+        message: 'Download started', 
+        downloadIds 
       });
     } catch (error) {
       logger.error('Error starting download:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to start download',
+      return res.status(500).json({ 
+        error: 'Failed to start download',
+        details: error instanceof Error ? error.message : 'Unknown error'
       });
     }
-  },
+  }
 
-  async getDownloadStatus(req: Request, res: Response) {
+  public async getDownloadStatus(req: Request, res: Response): Promise<Response> {
     try {
       const { ids } = req.query;
       const idList = typeof ids === 'string' ? ids.split(',') : [];
       
       if (idList.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'No download IDs provided',
-        });
+        return res.status(400).json({ error: 'At least one download ID is required' });
       }
 
-      const statuses = idList
-        .filter((id: string) => downloads.has(id))
-        .map((id: string) => {
-          const info = downloads.get(id);
-          return {
-            id: info.id,
-            status: info.status,
-            progress: info.progress,
-            error: info.error,
-            size: info.size,
-            duration: info.duration,
-            title: info.title,
-            lastUpdated: info.lastUpdated,
-          };
-        });
+      const results = idList.map(id => {
+        const download = this.downloads.get(id);
+        return download ? {
+          id: download.id,
+          url: download.url,
+          status: download.status,
+          progress: download.progress,
+          error: download.error,
+          size: download.size,
+          duration: download.duration,
+          title: download.title,
+          startTime: download.startTime,
+          lastUpdated: download.lastUpdated
+        } : { id, error: 'Download not found' };
+      });
 
-      res.json(statuses);
+      return res.json(results);
     } catch (error) {
       logger.error('Error getting download status:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get download status',
+      return res.status(500).json({ 
+        error: 'Failed to get download status',
+        details: error instanceof Error ? error.message : 'Unknown error'
       });
     }
-  },
+  }
 
-  async downloadFile(req: Request, res: Response) {
-    try {
-      const { id } = req.params;
-      const download = downloads.get(id);
-
-      if (!download) {
-        return res.status(404).json({
-          success: false,
-          message: 'Download not found',
-        });
-      }
-
-      if (download.status !== 'completed') {
-        return res.status(400).json({
-          success: false,
-          message: 'Download not completed yet',
-        });
-      }
-
-      if (!fs.existsSync(download.outputPath)) {
-        return res.status(404).json({
-          success: false,
-          message: 'File not found',
-        });
-      }
-
-      const filename = path.basename(download.outputPath);
-      res.download(download.outputPath, filename, (err) => {
-        if (err) {
-          logger.error('Error sending file:', err);
-        }
-      });
-    } catch (error) {
-      logger.error('Error downloading file:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to download file',
-      });
-    }
-  },
-
-  async processDownload(
+  private async processDownload(
     downloadId: string,
     url: string,
     quality: number,
     outputPath: string
   ): Promise<void> {
-    const download = downloads.get(downloadId) as DownloadInfo | undefined;
-    if (!download) return;
+    const download = this.downloads.get(downloadId);
+    if (!download) {
+      logger.error(`Download with ID ${downloadId} not found`);
+      return;
+    }
 
     try {
+      // Update status to downloading
+      download.status = 'downloading';
+      download.progress = 0;
+      download.lastUpdated = new Date();
       logger.info(`Starting download for ${url}`);
-      
-      // Get video info first using yt-dlp directly
+
+      // Get video info using yt-dlp
       const { stdout: infoJson } = await execPromise(`yt-dlp --dump-json "${url}"`);
       const videoInfo = JSON.parse(infoJson);
       
       // Update with video info
       download.title = videoInfo.title || 'Unknown';
       download.duration = videoInfo.duration;
-      download.status = 'downloading';
       download.lastUpdated = new Date();
       
       logger.info(`Found video: ${download.title} (${download.duration}s)`);
 
-      // Start the actual download
+      // Start the download
       await new Promise<void>((resolve, reject) => {
-        const downloadProcess = spawn('yt-dlp', [
+        const args = [
           '--extract-audio',
           '--audio-format', 'mp3',
           '--audio-quality', '0',
@@ -191,42 +162,107 @@ export const downloadController = {
           '--no-warnings',
           '--prefer-free-formats',
           '--newline',
+          '--no-cache-dir',
+          '--no-part',
+          '--no-mtime',
+          '--no-check-certificate',
+          '--force-ipv4',
+          '--socket-timeout', '30',
+          '--source-address', '0.0.0.0',
+          '--no-call-home',
+          '--no-playlist',
           url
-        ]);
+        ];
+        
+        logger.debug(`Executing: yt-dlp ${args.join(' ')}`);
+        
+        const downloadProcess = spawn('yt-dlp', args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false
+        });
+
+        let stderrData = '';
 
         downloadProcess.stdout.on('data', (data) => {
-          logger.debug(`[yt-dlp] ${data}`);
+          const output = data.toString().trim();
+          logger.debug(`[yt-dlp] ${output}`);
+          
+          // Update progress if available
+          if (output.includes('%')) {
+            const match = output.match(/(\d+\.?\d*)%/);
+            if (match) {
+              const progress = parseFloat(match[1]);
+              download.progress = Math.min(99, Math.max(0, progress));
+              download.lastUpdated = new Date();
+            }
+          }
         });
 
         downloadProcess.stderr.on('data', (data) => {
-          logger.error(`[yt-dlp error] ${data}`);
+          const errorOutput = data.toString().trim();
+          stderrData += errorOutput + '\n';
+          logger.error(`[yt-dlp error] ${errorOutput}`);
+        });
+
+        downloadProcess.on('error', (error) => {
+          logger.error('Failed to start download process:', error);
+          reject(new Error(`Failed to start download process: ${error.message}`));
         });
 
         downloadProcess.on('close', (code) => {
           if (code === 0) {
+            logger.info(`Download process completed successfully for: ${download.title}`);
             resolve();
           } else {
-            reject(new Error(`yt-dlp process exited with code ${code}`));
+            const errorMessage = `yt-dlp process exited with code ${code}`;
+            logger.error(`${errorMessage}. Stderr: ${stderrData}`);
+            reject(new Error(`${errorMessage}. ${stderrData || 'No error details available'}`));
           }
         });
       });
 
-      // Update status
+      // Verify the file was created
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(`Download completed but output file not found at ${outputPath}`);
+      }
+      
+      const stats = fs.statSync(outputPath);
+      if (stats.size === 0) {
+        fs.unlinkSync(outputPath); // Clean up empty file
+        throw new Error('Downloaded file is empty');
+      }
+
+      // Update status to completed
       download.status = 'completed';
       download.progress = 100;
-      download.size = fs.statSync(outputPath).size;
+      download.size = stats.size;
       download.lastUpdated = new Date();
       
       logger.info(`Download completed: ${download.title} (${download.size} bytes)`);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error(`Download failed for ${url}:`, error);
       
-      const download = downloads.get(downloadId);
-      if (download) {
-        download.status = 'error';
-        download.error = error instanceof Error ? error.message : 'Download failed';
-        download.lastUpdated = new Date();
+      // Clean up partially downloaded file if it exists
+      if (fs.existsSync(outputPath)) {
+        try {
+          fs.unlinkSync(outputPath);
+          logger.debug(`Cleaned up partially downloaded file: ${outputPath}`);
+        } catch (cleanupError) {
+          logger.error(`Failed to clean up file ${outputPath}:`, cleanupError);
+        }
+      }
+      
+      // Update download status to error
+      const failedDownload = this.downloads.get(downloadId);
+      if (failedDownload) {
+        failedDownload.status = 'error';
+        failedDownload.error = errorMessage;
+        failedDownload.lastUpdated = new Date();
       }
     }
-  },
-};
+  }
+}
+
+const downloadController = new DownloadController();
+export default downloadController;
