@@ -59,8 +59,8 @@ const InputArea: React.FC<InputAreaProps> = ({ onDownloadStart, isDownloading })
       return;
     }
 
-    // Validate YouTube URLs - more permissive regex to accept various YouTube URL formats
-    const youtubeRegex = /^(https?:\/\/)?(www\.|music\.|m\.)?(youtube\.com|youtu\.?be)(\/.*)?\??(.*&)?v=[\w-]+(&|$)|^[\w-]+$/;
+    // Validate YouTube URLs - more permissive regex to accept various YouTube URL formats including playlists
+    const youtubeRegex = /^(https?:\/\/)?(www\.|music\.|m\.)?(youtube\.com|youtu\.?be)\/.+/;
     const invalidUrls = validUrls.filter(url => !youtubeRegex.test(url.trim()));
     
     if (invalidUrls.length > 0) {

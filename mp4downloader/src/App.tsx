@@ -66,41 +66,65 @@ const App: FC = () => {
     async (items: { url: string; quality: QualityOption }[]) => {
       if (items.length === 0) return;
       
-      // For now, we'll just process the first item to match the existing implementation
-      // In the future, we can enhance this to handle multiple downloads
       const { url, quality } = items[0];
-      
       setIsDownloading(true);
 
       try {
-        // First, start the download and get the actual download ID
+        // Start the download and get the response
         const response = await downloadService.startDownload([url], quality);
         
-        if (!response.success || !response.ids?.[0]) {
+        if (!response.success) {
           throw new Error(response.message || 'Failed to start download');
         }
-        
-        const downloadId = response.ids[0];
-        
-        // Create a new download item with the actual download ID from the server
-        const newItem: DownloadItem = {
-          id: downloadId, // Use the actual download ID from the server
-          url,
-          title: url.split('/').pop() || 'download',
-          status: 'downloading',
-          progress: 5, // Initial progress
-          quality,
-          timestamp: Date.now(),
-        };
-        
-        setDownloadItems((prevItems) => [...prevItems, newItem]);
 
-        toast({
-          title: 'Download started',
-          description: 'Your download has been queued.',
-          status: 'info',
-          duration: 3000,
-        });
+        // Handle playlist response if present
+        if (response.playlists && response.playlists.length > 0) {
+          const playlist = response.playlists[0];
+          // Create a download item for each video in the playlist
+          const playlistItems: DownloadItem[] = playlist.videoIds.map((videoId, index) => ({
+            id: `${playlist.id}-${index}`,
+            url: `${url}?v=${videoId}`, // Reconstruct video URL if needed
+            title: `Track ${index + 1}`, // Will be updated with actual title from backend
+            status: 'downloading' as const,
+            progress: 0,
+            quality,
+            timestamp: Date.now(),
+            isPlaylistItem: true,
+            playlistId: playlist.id,
+          }));
+          
+          setDownloadItems(prevItems => [...prevItems, ...playlistItems]);
+
+          toast({
+            title: 'Playlist download started',
+            description: `Processing playlist with ${playlist.videoIds.length} videos`,
+            status: 'info',
+            duration: 3000,
+          });
+        } 
+        // Handle single video response if present
+        else if (response.ids && response.ids.length > 0) {
+          const downloadId = response.ids[0];
+          const newItem: DownloadItem = {
+            id: downloadId,
+            url,
+            title: url.split('/').pop() || 'download',
+            status: 'downloading',
+            progress: 5,
+            quality,
+            timestamp: Date.now(),
+          };
+          setDownloadItems(prevItems => [...prevItems, newItem]);
+
+          toast({
+            title: 'Download started',
+            description: 'Your download has been queued.',
+            status: 'info',
+            duration: 3000,
+          });
+        } else {
+          throw new Error('No valid download IDs or playlists received');
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to start download';
         

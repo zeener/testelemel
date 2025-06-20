@@ -19,7 +19,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 // Keep the process alive
 const keepAlive = setInterval(() => {
   console.log('Test server keep-alive at', new Date().toISOString());
-}, 10000); // Log every 10 seconds
+}, 30000); // Log every 30 seconds
 
 // Handle server errors
 server.on('error', (error) => {

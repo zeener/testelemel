@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { type DownloadProgress, type QualityOption } from '../types';
+import { type DownloadProgress, type QualityOption, type PlaylistInfo } from '../types';
 
 // Base URL for the API - points to the local backend server
 const API_BASE_URL = 'http://localhost:3001/api';
@@ -10,7 +10,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 10000, // 10 second timeout
+  timeout: 30000, // 30 second timeout
 });
 
 // Request interceptor for logging
@@ -58,7 +58,18 @@ export const downloadService = {
   async startDownload(
     urls: string[],
     quality: QualityOption
-  ): Promise<{ success: boolean; message: string; ids?: string[] }> {
+  ): Promise<{ 
+    success: boolean; 
+    message: string; 
+    ids?: string[];
+    playlists?: Array<{
+      id: string;
+      url: string;
+      videoIds: string[];
+      status: string;
+      message: string;
+    }>;
+  }> {
     try {
       console.log(`Starting download for ${urls.length} URLs with quality ${quality}kbps`);
       
@@ -67,14 +78,17 @@ export const downloadService = {
         quality: parseInt(quality, 10),
       });
       
-      if (!response.data || !response.data.downloadIds || !Array.isArray(response.data.downloadIds)) {
+      if (!response.data || (!response.data.downloadIds && !response.data.playlists)) {
         throw new Error('Invalid response format from server');
       }
       
       return {
         success: true,
-        message: 'Download started successfully',
-        ids: response.data.downloadIds, // Ensure we're using downloadIds from the response
+        message: response.data.playlists?.length > 0
+          ? `Processing ${response.data.playlists.length} playlist(s) with ${response.data.downloadIds?.length || 0} videos`
+          : `Started ${response.data.downloadIds?.length || 0} download(s)`,
+        ids: response.data.downloadIds || [],
+        playlists: response.data.playlists
       };
     } catch (error) {
       console.error('Error starting download:', error);
